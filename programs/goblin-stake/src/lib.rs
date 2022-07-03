@@ -58,7 +58,7 @@ pub mod goblin_stake {
       let pool = &mut ctx.accounts.pool;
       let owner = ctx.accounts.owner;
       if pool.stakes[stake_id as usize].owner == owner.to_account_info().key {
-        return Err(ErrorCode::NONFTOWNER.into());
+        return Err(ErrorCode::NoNFTOwner.into());
       }
       let amount = pool.stakes[stake_id as usize].amount;
       pool.stakes.remove(stake_id);
@@ -102,10 +102,10 @@ pub mod goblin_stake {
       let pool = &mut ctx.accounts.pool;
       let owner = ctx.accounts.owner;
       if pool.stakes[stake_id as usize].owner == owner.to_account_info().key {
-        return Err(ErrorCode::NONFTOWNER.into());
+        return Err(ErrorCode::NoNFTOwner.into());
       }
       if pool.stakes[stake_id as usize].last_update_time + constants.DURATION < clock.unix_timestamp.try_into().unwrap() {
-        return Err(ErrorCode::INVALIDTIME.into());
+        return Err(ErrorCode::InvalidTime.into());
       }
 
       let seeds = &[
@@ -185,7 +185,7 @@ pub enum ErrorCode {
   #[msg("Amount is not amount to stake.")]
   InvalidAmount,
   #[msg("You are not nft owner.")]
-  NONFTOWNER,
+  NoNFTOwner,
   #[msg("You can not claim yet.")]
-  INVALIDTIME,
+  InvalidTime,
 }
