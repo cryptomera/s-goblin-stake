@@ -41,7 +41,7 @@ pub mod goblin_stake {
 
       // Transfer nft into the stake vault.
       {
-          let cpi_ctx = CpiContext::new(
+          cpi_ctx = CpiContext::new(
               ctx.accounts.nft_program.to_account_info(),
               token::Transfer {
                   from: ctx.accounts.nft_from_account.to_account_info(),
@@ -80,7 +80,7 @@ pub mod goblin_stake {
             pool_signer,
         );
         token::transfer(cpi_ctx, amount)?;
-        let cpi_ctx = CpiContext::new_with_signer(
+        cpi_ctx = CpiContext::new_with_signer(
           ctx.accounts.token_program.to_account_info(),
           token::Transfer {
               from: ctx.accounts.staking_vault.to_account_info(),
@@ -131,21 +131,95 @@ pub mod goblin_stake {
       }
       Ok(())
     }
+
+    pub fn add_nft_for_sale(
+        ctx: Context<ADDNFT>,
+        price: u128,
+    ) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.nft_program.to_account_info(),
+            token::Transfer {
+                from: ctx.accounts.from.to_account_info(),
+                to: ctx.accounts.staking_vault.to_account_info(),
+                authority: ctx.accounts.funder.to_account_info(),
+            },
+        );
+        token::transfer(cpi_ctx, 1)?;
+
+        pool.nftsForSale.push(NFT {
+            nft_mint: ctx.accounts.staking_mint.key(),
+            nft_vault: ctx.accounts.staking_vault.key(),
+            price: price,
+            redeemed: false
+        });
+        Ok(())
+    }
+
+    pub fn buy_nft(
+        ctx: Context<BuyNFT>,
+        nft_id: u8,
+    ) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        if pool.nfts[nft_id as usize].redeemed == true {
+            return Err(ErrorCode::NFTRedeemed.into());
+        }
+        let sees = &[
+            ctx.accounts.pool.to_account_info().key.as_ref(),
+            &[ctx.accounts.pool.nonce],
+        ];
+        let pool_signer = &[&seeds[..]];
+        let amount = pool.nftsForSale[nft_id as usize].price;
+        let fee = amount * 5 / 100;
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            token::Transfer {
+                from: ctx.accounts.token_from_account.to_account_info(),
+                to: ctx.accounts.staking_vault.to_account_info(),
+                authority: ctx.accounts.owner.to_account_info(), //todo use user account as signer
+            },
+        );
+        token::transfer(cpi_ctx, amount - fee)?;
+        cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            token::Transfer {
+                from: ctx.accounts.token_from_account.to_account_info(),
+                to: ctx.pool.devAddr,
+                authority: ctx.accounts.owner.to_account_info(), //todo use user account as signer
+            },
+        );
+        token::transfer(cpi_ctx, fee)?;
+        cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            token::Transfer {
+                from: ctx.accounts.staking_vault.to_account_info(),
+                to: ctx.accounts.receive_account.to_account_info(),
+                authority: ctx.accounts.pool_signer.to_account_info(),
+            },
+        );
+        token::transfer(cpi_ctx, 1)?;
+    }
 }
 
 
 #[derive(Accounts)]
 pub struct Stake<'info> {
-  owner: Signer<'info>,
-  #[account(mut)]
-  token_from_account: Box<'info, TokenAccount>>,
-  nft_from_account: Box<'info, TokenAccount>>,
-  // Misc
-  token_program: Program<'info, Token>,
-  nft_program: Program<'info, Token>,
-  pool: Box<Account<'info, Pool>>,
-  staking_vault: Box<Account<'info, TokenAccount>>,
-  pool_signer: UncheckedAccount<'info>,
+    owner: Signer<'info>,
+    #[account(mut)]
+    token_from_account: Box<'info, TokenAccount>>,
+    nft_from_account: Box<'info, TokenAccount>>,
+    // Misc
+    token_program: Program<'info, Token>,
+    nft_program: Program<'info, Token>,
+    pool: Box<Account<'info, Pool>>,
+    staking_mint: Box<Account<'info, Mint>>,
+    #[account(
+        constraint = staking_vault.mint == staking_mint.key(),
+        constraint = staking_vault.owner == pool_signer.key(),
+        constraint = staking_vault.close_authority == COption::None,
+    )]
+    staking_vault: Box<Account<'info, TokenAccount>>,
+    pool_signer: UncheckedAccount<'info>,
 }
 
 
@@ -159,26 +233,73 @@ pub struct ClaimNFT<'info> {
   pool_signer: UncheckedAccount<'info>,
 }
 
+#[derive(Accounts)]
+pub struct AddNFT<'info> {
+    #[account(mut)]
+    pool: Box<Account<'info, Pool>>,
+    staking_mint: Box<Account<'info, Mint>>,
+    #[account(
+        constraint = staking_vault.mint == staking_mint.key(),
+        constraint = staking_vault.owner == pool_signer.key(),
+        constraint = staking_vault.close_authority == COption::None,
+    )]
+    staking_vault: Box<Account<'info, TokenAccount>>,
+    funder: Signer<'info>,
+    #[account(mut)]
+    from: Box<Account<'info, TokenAccount>>,
+    nft_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct BuyNFT<'info> {
+    #[account(mut)]
+    pool: Box<Account<'info, Pool>>,
+    staking_mint: Box<Account<'info, Mint>>,
+    #[account(
+        constraint = staking_vault.mint == staking_mint.key(),
+        constraint = staking_vault.owner == pool_signer.key(),
+        constraint = staking_vault.close_authority == COption::None,
+    )]
+    staking_vault: Box<Account<'info, TokenAccount>>,
+    receive_account: Box<Account<'info. TokenAccount>>,
+    funder: Signer<'info>,
+    #[account(mut)]
+    from: Box<Account<'info, TokenAccount>>,
+    nft_program: Program<'info, Token>,
+    token_program: Program<'info, Token>,
+}
+
 #[account]
 pub struct Pool {
-  pub stakes: Vec<StakeInfo>,
-  pub nfts: Vec<NFTInfo>,
-  pub nonce: u8,
+    pub stakes: Vec<StakeInfo>,
+    pub nfts: Vec<NFTInfo>,
+    pub nonce: u8,
+    pub devAddr: Pubkey,
+    pub nftsForSale: Vec<NFT>,
 }
 
 #[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize)]
 pub struct StakeInfo {
-  pub nft: Pubkey,
-  pub last_update_time: u128,
-  pub owner: Pubkey,
-  pub token_amount: u128,
+    pub nft: Pubkey,
+    pub last_update_time: u128,
+    pub owner: Pubkey,
+    pub token_amount: u128,
 }
 
 #[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize)]
 pub struct NFTInfo {
-  pub nft: Pubkey,
-  pub rank: u8,
+    pub nft: Pubkey,
+    pub rank: u8,
 }
+
+#[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize)]
+pub struct NFT {
+    pub nft_mint: Pubkey,
+    pub nft_vault: Pubkey,
+    pub price: u128,
+    pub redeemed: bool,
+}
+
 
 #[error]
 pub enum ErrorCode {
@@ -188,4 +309,6 @@ pub enum ErrorCode {
   NoNFTOwner,
   #[msg("You can not claim yet.")]
   InvalidTime,
+  #[msg("NFT was already sold out")]
+  NFTRedeemed,
 }
